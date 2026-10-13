@@ -43,7 +43,7 @@
         .btn:hover { background: var(--primary-hover); }
         .btn-secondary { background: #f1f5f9; color: var(--text-main); }
         .btn-secondary:hover { background: #e2e8f0; }
-        .error-msg { color: var(--danger); font-size: 0.8rem; text-align: center; margin-top: 1rem; font-weight: 600; }
+        .error-msg { color: var(--danger); font-size: 0.8rem; text-align: center; margin-top: 1rem; font-weight: 600; word-break: break-word; }
 
         .panel { display: none; }
         .panel.active { display: block; }
@@ -95,7 +95,7 @@
             <div class="auth-card">
                 <div class="auth-header">
                     <h2>Accesso Cloud</h2>
-                    <p>Inserisci le tue credenziali Supabase</p>
+                    <p>Inserisci le tue credenziali</p>
                 </div>
                 <div class="auth-body">
                     <form onsubmit="handleAuth(event)">
@@ -107,7 +107,7 @@
                             <label>Password</label>
                             <input type="password" id="loginPassword" required class="form-control" placeholder="••••••••">
                         </div>
-                        <button type="submit" class="btn">Accedi al Cloud</button>
+                        <button type="submit" class="btn">Accedi</button>
                         <div id="authError" class="error-msg"></div>
                     </form>
                 </div>
@@ -230,10 +230,13 @@
     </footer>
 
     <script>
-        // === I TUOI DATI SUPABASE CONFIGURATI ===
+        // === CONFIGURAZIONE SUPABASE ===
         const SUPABASE_URL = 'https://jfbncadqkxtqhkzaddmv.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_B9IlaoctAlLdGL2FBa3xGQ_xBum-d24';
-        // ==========================================
+        
+        // Se la tua email NON contiene la parola "admin", scrivila qui sotto (es. 'latuaemail@gmail.com')
+        const SPECIFIC_ADMIN_EMAIL = ''; 
+        // ================================
 
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -260,14 +263,23 @@
 
             const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
             if (error) {
-                errEl.innerText = "Errore di accesso: " + error.message;
+                if (error.message.includes('Invalid login credentials')) {
+                    errEl.innerText = "Credenziali errate: Email o password non valide.";
+                } else if (error.message.includes('Email not confirmed')) {
+                    errEl.innerText = "Email non confermata. Disattiva 'Confirm email' da Supabase o conferma l'utente.";
+                } else {
+                    errEl.innerText = "Errore di accesso: " + error.message;
+                }
             } else {
                 await handleUserSession(data.user);
             }
         }
 
         async function handleUserSession(user) {
-            const isAdmin = user.email.includes('admin'); 
+            const emailLower = user.email.toLowerCase();
+            // L'utente è admin se l'email contiene "admin" O se corrisponde all'email specifica impostata
+            const isAdmin = emailLower.includes('admin') || (SPECIFIC_ADMIN_EMAIL !== '' && emailLower === SPECIFIC_ADMIN_EMAIL.toLowerCase()); 
+            
             currentUser = { id: user.id, email: user.email, role: isAdmin ? 'admin' : 'student' };
 
             document.getElementById('navUserArea').style.display = 'flex';
@@ -346,6 +358,11 @@
             const { data, error } = await supabaseClient.auth.signUp({ email, password });
             if (error) {
                 alert("Errore nella creazione dell'utente: " + error.message);
+                return;
+            }
+
+            if (!data.user) {
+                alert("Impossibile recuperare l'utente creato. Assicurati che l'opzione 'Confirm email' sia disattivata su Supabase.");
                 return;
             }
 
@@ -528,3 +545,86 @@
         function calculateSubjectAvg(sub, mediaType) {
             const activeGrades = sub.grades.filter(g => !g.excluded);
             if (activeGrades.length === 0) return null;
+
+            if (mediaType === 'aritmetica') {
+                const sum = activeGrades.reduce((acc, g) => acc + g.value, 0);
+                return sum / activeGrades.length;
+            } else {
+                let weightedSum = 0;
+                let totalWeight = 0;
+                activeGrades.forEach(g => {
+                    weightedSum += g.value * g.weight;
+                    totalWeight += g.weight;
+                });
+                if (totalWeight === 0) return null;
+                return weightedSum / totalWeight;
+            }
+        }
+
+        function renderRegister() {
+            document.getElementById('mediaTypeSelect').value = currentRegisterData.mediaType;
+            const container = document.getElementById('subjectsContainer');
+            container.innerHTML = "";
+
+            let totalGrades = 0;
+            let sumOfAvgs = 0;
+            let validSubs = 0;
+
+            currentRegisterData.subjects.forEach(sub => {
+                const avg = calculateSubjectAvg(sub, currentRegisterData.mediaType);
+                if (avg !== null) {
+                    sumOfAvgs += avg;
+                    validSubs++;
+                }
+
+                totalGrades += sub.grades.length;
+
+                const card = document.createElement('div');
+                card.className = "card";
+
+                let gradesHtml = "";
+                if (sub.grades.length === 0) {
+                    gradesHtml = `<span style="font-size: 0.85rem; color: var(--text-muted); font-style: italic;">Nessun voto inserito.</span>`;
+                } else {
+                    gradesHtml = `<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">`;
+                    sub.grades.forEach(g => {
+                        let pillClass = "grade-pass";
+                        if (g.excluded) pillClass = "grade-excluded";
+                        else if (g.value < 6) pillClass = "grade-fail";
+
+                        gradesHtml += `
+                            <div class="grade-pill ${pillClass}">
+                                <span onclick="toggleExclude(${sub.id}, ${g.id})" title="Clicca per escludere/includere">${g.raw}</span>
+                                ${currentRegisterData.mediaType === 'ponderata' && g.weight !== 100 ? `<span style="font-size:0.65rem; opacity:0.7;">(${g.weight}%)</span>` : ''}
+                                <span onclick="deleteGrade(${sub.id}, ${g.id})" style="margin-left: 0.3rem; opacity: 0.6; cursor: pointer;">×</span>
+                            </div>
+                        `;
+                    });
+                    gradesHtml += `</div>`;
+                }
+
+                card.innerHTML = `
+                    <div class="flex-between" style="margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <h3 style="font-size: 1rem; font-weight: bold;">${sub.name}</h3>
+                            <span class="badge" style="background: ${avg !== null && avg < 6 ? '#fee2e2' : '#e0f2fe'}; color: ${avg !== null && avg < 6 ? '#991b1b' : '#0369a1'}; font-weight: bold;">
+                                Media: ${avg !== null ? avg.toFixed(2) : 'N/D'}
+                            </span>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button onclick="openGradeModal(${sub.id})" class="btn-sm" style="background: #eff6ff; color: var(--primary);">+ Voto</button>
+                            <button onclick="deleteSubject(${sub.id})" class="btn-sm btn-danger">Elimina</button>
+                        </div>
+                    </div>
+                    ${gradesHtml}
+                `;
+                container.appendChild(card);
+            });
+
+            const generalAvg = validSubs > 0 ? sumOfAvgs / validSubs : null;
+            document.getElementById('generalAverageVal').innerText = generalAvg !== null ? generalAvg.toFixed(2) : '0.00';
+            document.getElementById('totalGradesCount').innerText = `${totalGrades} voti totali nel Cloud`;
+        }
+    </script>
+</body>
+</html>
