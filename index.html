@@ -197,4 +197,422 @@
 
     <!-- Modal Nuovo Voto -->
     <div id="gradeModal" class="modal-overlay">
-        <div class
+        <div class="modal">
+            <h3>Aggiungi Voto</h3>
+            <form onsubmit="saveGrade(event)">
+                <input type="hidden" id="gradeSubjectId">
+                <div class="form-group">
+                    <label>Voto (es. 7, 8+, 6.5 - No frazioni tipo 7/8)</label>
+                    <input type="text" id="gradeValueInput" required class="form-control" placeholder="es. 7.5 o 8+">
+                </div>
+                <div class="form-group">
+                    <label>Data</label>
+                    <input type="date" id="gradeDateInput" required class="form-control">
+                </div>
+                <div class="form-group" id="weightGroup" style="display: none;">
+                    <label>Peso (%)</label>
+                    <input type="number" id="gradeWeightInput" value="100" min="1" max="500" class="form-control">
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                    <input type="checkbox" id="gradeExcludeInput" style="width: 1rem; height: 1rem;">
+                    <label for="gradeExcludeInput" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;">Non conta nella media</label>
+                </div>
+                <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
+                    <button type="button" onclick="closeGradeModal()" class="btn btn-secondary">Annulla</button>
+                    <button type="submit" class="btn">Aggiungi</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <footer>
+        Registro Elettronico Cloud • Sincronizzazione Supabase
+    </footer>
+
+    <script>
+        // === I TUOI DATI SUPABASE CONFIGURATI ===
+        const SUPABASE_URL = 'https://jfbncadqkxtqhkzaddmv.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_B9IlaoctAlLdGL2FBa3xGQ_xBum-d24';
+        // ==========================================
+
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let currentUser = null; 
+        let currentRegisterData = { mediaType: 'aritmetica', subjects: [] };
+        let viewingStudentId = null;
+        let allStudentsList = [];
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session) {
+                await handleUserSession(session.user);
+            } else {
+                showPanel('authPanel');
+            }
+        });
+
+        async function handleAuth(e) {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const errEl = document.getElementById('authError');
+            errEl.innerText = "";
+
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) {
+                errEl.innerText = "Errore di accesso: " + error.message;
+            } else {
+                await handleUserSession(data.user);
+            }
+        }
+
+        async function handleUserSession(user) {
+            const isAdmin = user.email.includes('admin'); 
+            currentUser = { id: user.id, email: user.email, role: isAdmin ? 'admin' : 'student' };
+
+            document.getElementById('navUserArea').style.display = 'flex';
+            document.getElementById('navUserEmail').innerText = currentUser.email;
+            const badge = document.getElementById('userRoleBadge');
+
+            if (currentUser.role === 'admin') {
+                badge.innerText = "Amministratore Cloud";
+                badge.className = "badge admin";
+                showPanel('adminPanel');
+                await loadStudentsList();
+            } else {
+                badge.innerText = "Studente Cloud";
+                badge.className = "badge student";
+                viewingStudentId = currentUser.id;
+                showPanel('studentPanel');
+                document.getElementById('backAdminBtn').style.display = 'none';
+                document.getElementById('registerTitle').innerText = "Il Mio Registro Voti";
+                await loadStudentRegister(currentUser.id);
+            }
+        }
+
+        async function logout() {
+            await supabaseClient.auth.signOut();
+            currentUser = null;
+            viewingStudentId = null;
+            showPanel('authPanel');
+            document.getElementById('userRoleBadge').innerText = "Ospite";
+            document.getElementById('userRoleBadge').className = "badge";
+            document.getElementById('navUserArea').style.display = 'none';
+        }
+
+        function showPanel(panelId) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(panelId).classList.add('active');
+        }
+
+        async function loadStudentsList() {
+            const { data, error } = await supabaseClient.from('registri_scolastici').select('nome_id, email');
+            const tbody = document.getElementById('studentsTableBody');
+            tbody.innerHTML = "";
+
+            if (error || !data || data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: var(--text-muted); padding: 2rem;">Nessuno studente nel cloud. Clicca su "+ Nuovo Studente".</td></tr>`;
+                return;
+            }
+
+            allStudentsList = data;
+            allStudentsList.forEach(st => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight: 600;">${st.email}</td>
+                    <td style="text-align: right;">
+                        <button onclick="openStudentRegister('${st.nome_id}', '${st.email}')" class="btn-sm" style="background: #e0f2fe; color: #0369a1;">Apri Registro</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function openUserModal() {
+            document.getElementById('modalStudentEmail').value = "";
+            document.getElementById('modalStudentPassword').value = "";
+            document.getElementById('userModal').classList.add('active');
+        }
+
+        function closeUserModal() {
+            document.getElementById('userModal').classList.remove('active');
+        }
+
+        async function saveStudent(e) {
+            e.preventDefault();
+            const email = document.getElementById('modalStudentEmail').value.trim();
+            const password = document.getElementById('modalStudentPassword').value;
+
+            const { data, error } = await supabaseClient.auth.signUp({ email, password });
+            if (error) {
+                alert("Errore nella creazione dell'utente: " + error.message);
+                return;
+            }
+
+            const newUserId = data.user.id;
+            const defaultRegister = {
+                mediaType: 'aritmetica',
+                subjects: [
+                    { id: 1, name: 'Matematica', grades: [] },
+                    { id: 2, name: 'Italiano', grades: [] }
+                ]
+            };
+
+            await supabaseClient.from('registri_scolastici').upsert({
+                nome_id: newUserId,
+                email: email,
+                data: defaultRegister
+            });
+
+            closeUserModal();
+            loadStudentsList();
+            alert("Studente creato con successo nel Cloud!");
+        }
+
+        async function openStudentRegister(studentId, email) {
+            viewingStudentId = studentId;
+            showPanel('studentPanel');
+            document.getElementById('backAdminBtn').style.display = 'inline-block';
+            document.getElementById('registerTitle').innerText = `Registro di: ${email}`;
+            await loadStudentRegister(studentId);
+        }
+
+        async function backToAdmin() {
+            viewingStudentId = null;
+            showPanel('adminPanel');
+            loadStudentsList();
+        }
+
+        async function loadStudentRegister(studentId) {
+            const { data, error } = await supabaseClient
+                .from('registri_scolastici')
+                .select('data')
+                .eq('nome_id', studentId)
+                .single();
+
+            if (data && data.data) {
+                currentRegisterData = data.data;
+            } else {
+                currentRegisterData = {
+                    mediaType: 'aritmetica',
+                    subjects: [
+                        { id: 1, name: 'Matematica', grades: [] },
+                        { id: 2, name: 'Italiano', grades: [] }
+                    ]
+                };
+            }
+            renderRegister();
+        }
+
+        async function saveRegisterToCloud() {
+            await supabaseClient.from('registri_scolastici').upsert({
+                nome_id: viewingStudentId,
+                email: currentUser.role === 'student' ? currentUser.email : document.getElementById('registerTitle').innerText.replace('Registro di: ', ''),
+                data: currentRegisterData
+            });
+        }
+
+        async function changeMediaType(val) {
+            currentRegisterData.mediaType = val;
+            await saveRegisterToCloud();
+            renderRegister();
+        }
+
+        function parseGrade(str) {
+            str = str.trim().toLowerCase();
+            if (str.includes('/')) return null;
+            let val = parseFloat(str.replace(',', '.'));
+            if (isNaN(val)) return null;
+
+            if (str.endsWith('+')) val += 0.25;
+            else if (str.endsWith('-')) val -= 0.25;
+
+            if (val < 1 || val > 10) return null;
+            return val;
+        }
+
+        async function addSubject() {
+            const input = document.getElementById('newSubjectInput');
+            const name = input.value.trim();
+            if (!name) return;
+
+            currentRegisterData.subjects.push({
+                id: Date.now(),
+                name: name,
+                grades: []
+            });
+            input.value = "";
+            await saveRegisterToCloud();
+            renderRegister();
+        }
+
+        async function deleteSubject(subId) {
+            if (confirm("Eliminare questa materia e tutti i voti?")) {
+                currentRegisterData.subjects = currentRegisterData.subjects.filter(s => s.id !== subId);
+                await saveRegisterToCloud();
+                renderRegister();
+            }
+        }
+
+        function openGradeModal(subjectId) {
+            document.getElementById('gradeSubjectId').value = subjectId;
+            document.getElementById('gradeValueInput').value = "";
+            document.getElementById('gradeDateInput').value = new Date().toISOString().split('T')[0];
+            document.getElementById('gradeWeightInput').value = "100";
+            document.getElementById('gradeExcludeInput').checked = false;
+
+            if (currentRegisterData.mediaType === 'ponderata') {
+                document.getElementById('weightGroup').style.display = 'block';
+            } else {
+                document.getElementById('weightGroup').style.display = 'none';
+            }
+            document.getElementById('gradeModal').classList.add('active');
+        }
+
+        function closeGradeModal() {
+            document.getElementById('gradeModal').classList.remove('active');
+        }
+
+        async function saveGrade(e) {
+            e.preventDefault();
+            const subId = parseInt(document.getElementById('gradeSubjectId').value);
+            const rawVal = document.getElementById('gradeValueInput').value;
+            const numericVal = parseGrade(rawVal);
+
+            if (numericVal === null) {
+                alert("Voto non valido. Non sono ammesse frazioni (es. 7/8).");
+                return;
+            }
+
+            const date = document.getElementById('gradeDateInput').value;
+            const weight = parseInt(document.getElementById('gradeWeightInput').value) || 100;
+            const excluded = document.getElementById('gradeExcludeInput').checked;
+
+            const sub = currentRegisterData.subjects.find(s => s.id === subId);
+            if (sub) {
+                sub.grades.push({
+                    id: Date.now(),
+                    raw: rawVal.toUpperCase(),
+                    value: numericVal,
+                    date: date,
+                    weight: weight,
+                    excluded: excluded
+                });
+                await saveRegisterToCloud();
+                closeGradeModal();
+                renderRegister();
+            }
+        }
+
+        async function toggleExclude(subId, gradeId) {
+            const sub = currentRegisterData.subjects.find(s => s.id === subId);
+            if (sub) {
+                const g = sub.grades.find(item => item.id === gradeId);
+                if (g) {
+                    g.excluded = !g.excluded;
+                    await saveRegisterToCloud();
+                    renderRegister();
+                }
+            }
+        }
+
+        async function deleteGrade(subId, gradeId) {
+            const sub = currentRegisterData.subjects.find(s => s.id === subId);
+            if (sub) {
+                sub.grades = sub.grades.filter(g => g.id !== gradeId);
+                await saveRegisterToCloud();
+                renderRegister();
+            }
+        }
+
+        function calculateSubjectAvg(sub, mediaType) {
+            const activeGrades = sub.grades.filter(g => !g.excluded);
+            if (activeGrades.length === 0) return null;
+
+            if (mediaType === 'ponderata') {
+                let sumProduct = 0;
+                let sumWeights = 0;
+                activeGrades.forEach(g => {
+                    sumProduct += g.value * g.weight;
+                    sumWeights += g.weight;
+                });
+                return sumWeights > 0 ? (sumProduct / sumWeights) : null;
+            } else {
+                let sum = activeGrades.reduce((acc, g) => acc + g.value, 0);
+                return sum / activeGrades.length;
+            }
+        }
+
+        function renderRegister() {
+            document.getElementById('mediaTypeSelect').value = currentRegisterData.mediaType;
+            const container = document.getElementById('subjectsContainer');
+            container.innerHTML = "";
+
+            let allActiveGradesCount = 0;
+            let sumAllGrades = 0;
+            let totalWeightsSum = 0;
+            let countSubjectsWithAvg = 0;
+            let sumSubjectsAvgs = 0;
+
+            currentRegisterData.subjects.forEach(sub => {
+                const subAvg = calculateSubjectAvg(sub, currentRegisterData.mediaType);
+                if (subAvg !== null) {
+                    countSubjectsWithAvg++;
+                    sumSubjectsAvgs += subAvg;
+                }
+
+                sub.grades.forEach(g => {
+                    if (!g.excluded) {
+                        allActiveGradesCount++;
+                        sumAllGrades += g.value;
+                    }
+                });
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                
+                let gradesHtml = '';
+                if (sub.grades.length === 0) {
+                    gradesHtml = `<p style="font-size: 0.85rem; color: var(--text-muted); font-style: italic; margin-bottom: 1rem;">Nessun voto inserito in questa materia.</p>`;
+                } else {
+                    gradesHtml = `<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">`;
+                    sub.grades.forEach(g => {
+                        let pillClass = 'grade-pill grade-pass';
+                        if (g.value < 6) pillClass = 'grade-pill grade-fail';
+                        if (g.excluded) pillClass = 'grade-pill grade-excluded';
+
+                        gradesHtml += `
+                            <span class="${pillClass}" onclick="toggleExclude(${sub.id}, ${g.id})" title="Clicca per escludere/includere nella media">
+                                ${g.raw} (${g.date})
+                                <span onclick="event.stopPropagation(); deleteGrade(${sub.id}, ${g.id})" style="margin-left: 4px; font-weight: normal; opacity: 0.7; cursor: pointer;">✕</span>
+                            </span>
+                        `;
+                    });
+                    gradesHtml += `</div>`;
+                }
+
+                let avgText = subAvg !== null ? subAvg.toFixed(2) : 'N.D.';
+
+                card.innerHTML = `
+                    <div class="flex-between" style="margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: baseline; gap: 0.75rem;">
+                            <h3 style="font-size: 1.1rem; font-weight: bold;">${sub.name}</h3>
+                            <span style="font-size: 0.85rem; color: var(--text-muted);">Media: <strong style="color: var(--text-main);">${avgText}</strong></span>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button onclick="openGradeModal(${sub.id})" class="btn-sm" style="background: #eff6ff; color: var(--primary);">+ Voto</button>
+                            <button onclick="deleteSubject(${sub.id})" class="btn-sm btn-danger">Elimina</button>
+                        </div>
+                    </div>
+                    ${gradesHtml}
+                `;
+                container.appendChild(card);
+            });
+
+            let generalAvg = countSubjectsWithAvg > 0 ? (sumSubjectsAvgs / countSubjectsWithAvg) : 0;
+            document.getElementById('generalAverageVal').innerText = generalAvg.toFixed(2);
+            document.getElementById('totalGradesCount').innerText = `${allActiveGradesCount} voti validi`;
+        }
+    </script>
+</body>
+</html>
